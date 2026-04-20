@@ -1,22 +1,17 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.integrate import solve_ivp
+from scipy.signal import StateSpace, lsim
 
 # -------------------------
-# System Parameters
+# Parameters
 # -------------------------
 
-M1 = 1000
-M2 = 100
-
-k1 = 20000
-k2 = 15000
-
-b1 = 1500
-b2 = 1000
+M1, M2 = 1000, 100
+k1, k2 = 20000, 15000
+b1, b2 = 1500, 1000
 
 # -------------------------
-# State Matrix
+# State matrices
 # -------------------------
 
 A = np.array([
@@ -26,93 +21,53 @@ A = np.array([
 [ k2/M2, b2/M2, -k2/M2, -b2/M2]
 ])
 
-# wind disturbance input
 Bw = np.array([[0],
                [1/M1],
                [0],
                [0]])
 
-# actuator force input
 Bu = np.array([[0],
                [-1/M1],
                [0],
                [1/M2]])
 
-# -------------------------
-# Controller Gain
-# -------------------------
+# Combine inputs → [wind, control]
+B = np.hstack((Bw, Bu))
+
+# Output: choose what you care about
+C = np.eye(4)
+D = np.zeros((4,2))
+
 
 K = np.array([4000, 1500, -2000, -400])
 
-# -------------------------
-# Time
-# -------------------------
+# Closed-loop system
+A_cl = A - Bu @ K.reshape(1,4)
+B_cl = Bw   # only wind remains external input
 
-t = np.linspace(0,40,2000)
-
-# -------------------------
-# Wind Function
-# -------------------------
+t = np.linspace(0, 40, 2000)
 
 def wind(t):
     return 300 + 200*np.sin(0.4*t) + 50*np.sin(2*t)
 
-# -------------------------
-# System Dynamics
-# -------------------------
+w = wind(t)
 
-def dynamics(t, x):
+sys = StateSpace(A_cl, B_cl, C, np.zeros((4,1)))
 
-    w = wind(t)
-
-    u = -K @ x     # active control force
-
-    dx = A @ x + Bw.flatten()*w + Bu.flatten()*u
-
-    return dx
-
-# -------------------------
-# Simulation
-# -------------------------
-
-sol = solve_ivp(dynamics,[0,40],[0,0,0,0],t_eval=t)
-
-x = sol.y.T
-
-# -------------------------
-# Plot Displacement
-# -------------------------
+t_out, y, x = lsim(sys, U=w, T=t)
 
 plt.figure()
-
-plt.plot(t,x[:,0],label="Building displacement")
-plt.plot(t,x[:,2],label="Damper displacement")
-
-plt.xlabel("Time")
-plt.ylabel("Displacement")
-plt.title("Active Mass Damper Simulation")
-
+plt.plot(t, y[:,0], label="Building displacement")
+plt.plot(t, y[:,2], label="Damper displacement")
 plt.legend()
 plt.grid()
-
+plt.title("Displacement (State-Space)")
 plt.show()
-
-# -------------------------
-# Plot Velocity
-# -------------------------
 
 plt.figure()
-
-plt.plot(t,x[:,1],label="Building velocity")
-plt.plot(t,x[:,3],label="Damper velocity")
-
-plt.xlabel("Time")
-plt.ylabel("Velocity")
-plt.title("Velocity Response")
-
+plt.plot(t, y[:,1], label="Building velocity")
+plt.plot(t, y[:,3], label="Damper velocity")
 plt.legend()
 plt.grid()
-
+plt.title("Velocity (State-Space)")
 plt.show()
-
-# active damper 
