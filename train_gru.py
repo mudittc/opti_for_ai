@@ -14,7 +14,7 @@ EPOCHS = 100
 BATCH_SIZE = 32
 
 FEATURES = ["y1_noisy","y3_noisy","control","wind"]
-TARGETS = ["y1_noisy","y3_noisy","control"]
+TARGETS = ["x1","x3","control"]
 
 class GRUNet(nn.Module):
     def __init__(self):
@@ -49,16 +49,24 @@ for sim in df["simulation_type"].unique():
     scaler_y = StandardScaler()
 
     feat_scaled = scaler_x.fit_transform(feat)
-    targ_scaled = scaler_y.fit_transform(feat[:,:3])
+    targets = d[TARGETS].values
+    targ_scaled = scaler_y.fit_transform(targets)
 
     combined = np.hstack([targ_scaled, feat_scaled[:,3:4]])
 
     X,y = make_windows(combined)
 
-    split = int(len(X)*0.7)
+    train_split = int(len(X)*0.70)
+    val_split = int(len(X)*0.85)
 
-    X_train = X[:split]
-    y_train = y[:split]
+    X_train = X[:train_split]
+    y_train = y[:train_split]
+
+    X_val = X[train_split:val_split]
+    y_val = y[train_split:val_split]
+
+    X_test = X[val_split:]
+    y_test = y[val_split:]
 
     model = GRUNet()
 
@@ -74,13 +82,63 @@ for sim in df["simulation_type"].unique():
         shuffle=True
     )
 
+    best_val_loss = float("inf")
+
+    patience = 20
+
+    counter = 0
+
+    train_losses = []
+
+    val_losses = []
+
     for epoch in range(EPOCHS):
+        model.train()
+        epoch_loss = 0
         for xb,yb in loader:
             pred = model(xb)
             loss = loss_fn(pred,yb)
             opt.zero_grad()
             loss.backward()
             opt.step()
+            epoch_loss += loss.item()
+        train_loss = epoch_loss / len(loader)
+        train_losses.append(train_loss)
+        model.eval()
+        with torch.no_grad():
+            val_pred = model(torch.FloatTensor(X_val))
+            val_loss = loss_fn(
+                val_pred,
+                torch.FloatTensor(y_val)
+            ).item()
+        val_losses.append(val_loss)
+
+        print(
+            f"Epoch {epoch+1} | "
+            f"Train: {train_loss:.6f} | "
+            f"Val: {val_loss:.6f}"
+        )
+
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            counter = 0
+        else:
+            counter += 1
+        if counter >= patience:
+            print("Early Stopping Triggered")
+            break
+
+
+    import matplotlib.pyplot as plt
+    plt.figure(figsize=(10,5))
+    plt.plot(train_losses,label="Training Loss")
+    plt.plot(val_losses,label="Validation Loss")
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.title(f"{sim} Training")
+    plt.legend()
+    plt.grid()
+    plt.show()
 
     history = combined[:WINDOW].copy()
     preds=[]
@@ -100,8 +158,23 @@ for sim in df["simulation_type"].unique():
     actual = d[TARGETS].values[WINDOW:]
 
     print(f"\n{sim}")
-    print("RMSE:", np.sqrt(mean_squared_error(actual,preds)))
-    print("MAE :", mean_absolute_error(actual,preds))
+    names = ["x1","x3","control"]
+
+    for i,name in enumerate(names):
+        rmse = np.sqrt(
+            mean_squared_error(
+                actual[:,i],
+                preds[:,i]
+            )
+        )
+        mae = mean_absolute_error(
+            actual[:,i],
+            preds[:,i]
+        )
+        print("----------------")
+        print(name)
+        print(f"RMSE : {rmse:.6f}")
+        print(f"MAE  : {mae:.6f}")
 
     fig = go.Figure()
 
