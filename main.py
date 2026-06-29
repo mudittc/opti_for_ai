@@ -32,33 +32,105 @@ K = np.array([500, 200, -300, -100])
 
 
 # Noise levels (bell gaussian distribution)
-sigma_x1 = 0.01
-sigma_x3 = 0.01
+sigma_x1 = 0.03
+sigma_x3 = 0.03
 
 # -------------------------
-# Wind models
+# Synthetic Wind Generator
 # -------------------------
-def wind_model(t, mode):
+def generate_wind(
+    t,
+    min_force=200,
+    max_force=700,
+    alpha=0.995,
+    target_std=25,
+    target_interval=(150,300),
+    turbulence_std=2,
+    gust_probability=0.015,
+    gust_duration=(20,60),
+    gust_strength=(40,120),
+    seed=None
+):
 
-    if mode == "sin_300":
-        return 300 + 200*np.sin(0.4*t)
+    if seed is not None:
+        np.random.seed(seed)
 
-    elif mode == "sin_500":
-        return 500 + 200*np.sin(0.4*t)
+    n = len(t)
 
-    elif mode == "step_slow":
-        return 300 if int(t/5) % 2 == 0 else 600
+    wind = np.zeros(n)
 
-    elif mode == "step_fast":
-        return 200 if int(t/2) % 2 == 0 else 700
+    target = np.random.uniform(350,550)
+    wind[0] = target
+
+    next_target = np.random.randint(*target_interval)
+
+    gust = np.zeros(n)
+
+    # -----------------------------
+    # Generate smooth gusts
+    # -----------------------------
+    i = 0
+    while i < n:
+
+        if np.random.rand() < gust_probability:
+
+            duration = np.random.randint(*gust_duration)
+
+            amplitude = np.random.uniform(*gust_strength)
+
+            if np.random.rand() < 0.5:
+                amplitude *= -1
+
+            end = min(i + duration, n)
+
+            # Half cosine pulse
+            pulse = amplitude * np.sin(
+                np.linspace(0, np.pi, end - i)
+            )
+
+            gust[i:end] += pulse
+
+            i = end
+
+        else:
+            i += 1
+
+    # -----------------------------
+    # Wind evolution
+    # -----------------------------
+    for i in range(1, n):
+
+        if i >= next_target:
+
+            target += np.random.normal(0, target_std)
+            target = np.clip(target, min_force, max_force)
+
+            next_target += np.random.randint(*target_interval)
+
+        turbulence = np.random.normal(0, turbulence_std)
+
+        wind[i] = (
+            alpha * wind[i-1]
+            + (1-alpha) * target
+            + gust[i]
+            + turbulence
+        )
+
+        wind[i] = np.clip(
+            wind[i],
+            min_force,
+            max_force
+        )
+
+    return wind
 
 # -------------------------
 # System dynamics
 # -------------------------
-def model(t, x, wind_type):
+def model(t, x, t_grid, wind_profile):
 
     x1, x2, x3, x4 = x
-    w = wind_model(t, wind_type)
+    w = np.interp(t, t_grid, wind_profile)
 
     u = -K @ x
 
@@ -75,107 +147,149 @@ def model(t, x, wind_type):
 t = np.linspace(0, 40, 800)   # 800 points (within your 500–1000 range)
 x0 = [0, 0, 0, 0]
 
-wind_types = ["sin_300", "sin_500", "step_slow", "step_fast"]
-
-all_data = []
+# -------------------------
+# Generate fixed synthetic wind profile
+# -------------------------
+wind_vals = generate_wind(
+    t,
+    seed=42          # Change this if you ever want a different fixed wind
+)
 
 # -------------------------
-# Run simulations
+# Solve system
 # -------------------------
-for w_type in wind_types:
+sol = solve_ivp(
+    model,
+    [0, 40],
+    x0,
+    t_eval=t,
+    args=(t, wind_vals)
+)
 
-    sol = solve_ivp(model, [0, 40], x0, t_eval=t, args=(w_type,))
-    X = sol.y.T   # (N, 4)
-
-    # Inputs
-    wind_vals = np.array([wind_model(ti, w_type) for ti in t])
-    control_vals = np.array([-K @ X[i] for i in range(len(t))])
-
-    # Noise (separate distributions)
-    noise_x1 = np.random.normal(0, sigma_x1, len(t))
-    noise_x3 = np.random.normal(0, sigma_x3, len(t))
-
-    y1 = X[:, 0] + noise_x1
-    y3 = X[:, 2] + noise_x3
-
-    # -------------------------
-    # Create dataset
-    # -------------------------
-    df = pd.DataFrame({
-        "time": t,
-        "x1": X[:, 0],
-        "x2": X[:, 1],
-        "x3": X[:, 2],
-        "x4": X[:, 3],
-        "y1_noisy": y1,
-        "y3_noisy": y3,
-        "wind": wind_vals,
-        "control": control_vals,
-        "simulation_type": w_type
-    })
-
-    all_data.append(df)
-
-    # -------------------------
-    # Plot (one graph per wind)
-    # -------------------------
-    fig = go.Figure()
-
-    # STATES (left axis)
-    fig.add_trace(go.Scatter(x=t, y=X[:,0], name="x1 (building)", line=dict(width=2)))
-    fig.add_trace(go.Scatter(x=t, y=X[:,1], name="x2 (velocity)", line=dict(dash="dot")))
-    fig.add_trace(go.Scatter(x=t, y=X[:,2], name="x3 (damper)", line=dict(width=2)))
-    fig.add_trace(go.Scatter(x=t, y=X[:,3], name="x4 (damper vel)", line=dict(dash="dot")))
-
-    # NOISY OUTPUTS
-    fig.add_trace(go.Scatter(x=t, y=y1, name="x1 noisy", line=dict(dash="dash")))
-    fig.add_trace(go.Scatter(x=t, y=y3, name="x3 noisy", line=dict(dash="dash")))
-
-    # INPUTS (right axis)
-    fig.add_trace(go.Scatter(
-        x=t, y=wind_vals,
-        name="wind",
-        yaxis="y2",
-        line=dict(dash="longdash")
-    ))
-
-    fig.add_trace(go.Scatter(
-        x=t, y=control_vals,
-        name="control (active damping)",
-        yaxis="y2"
-    ))
-
-    # LAYOUT
-    fig.update_layout(
-        title=f"System Response - {w_type}",
-        xaxis=dict(title="Time"),
-
-        yaxis=dict(
-            title="States / Displacement",
-            side="left"
-        ),
-
-        yaxis2=dict(
-            title="Input Forces (Wind & Control)",
-            overlaying="y",
-            side="right"
-        ),
-
-        hovermode="x unified"
-    )
-
-    # Show in browser
-    fig.show(renderer="browser")
-
-    # Optional save
-    # fig.write_html(f"plot_{w_type}.html")
+X = sol.y.T
 
 # -------------------------
-# Combine all data
+# Active control force
 # -------------------------
-combined_df = pd.concat(all_data, ignore_index=True)
+control_vals = np.array([-K @ X[i] for i in range(len(t))])
 
-# Save single CSV
-combined_df.to_csv("final_dataset.csv", index=False)
+# -------------------------
+# Sensor noise
+# -------------------------
+noise_x1 = np.random.normal(0, sigma_x1, len(t))
+noise_x3 = np.random.normal(0, sigma_x3, len(t))
 
-print("Dataset saved as final_dataset.csv")
+y1 = X[:, 0] + noise_x1
+y3 = X[:, 2] + noise_x3
+
+# -------------------------
+# Create dataset
+# -------------------------
+df = pd.DataFrame({
+    "time": t,
+    "x1": X[:, 0],
+    "x2": X[:, 1],
+    "x3": X[:, 2],
+    "x4": X[:, 3],
+    "y1_noisy": y1,
+    "y3_noisy": y3,
+    "wind": wind_vals,
+    "control": control_vals
+})
+
+# -------------------------
+# Plot
+# -------------------------
+fig = go.Figure()
+
+# True states
+fig.add_trace(go.Scatter(
+    x=t,
+    y=X[:, 0],
+    name="x1 (building)",
+    line=dict(width=2)
+))
+
+fig.add_trace(go.Scatter(
+    x=t,
+    y=X[:, 1],
+    name="x2 (velocity)",
+    line=dict(dash="dot")
+))
+
+fig.add_trace(go.Scatter(
+    x=t,
+    y=X[:, 2],
+    name="x3 (damper)",
+    line=dict(width=2)
+))
+
+fig.add_trace(go.Scatter(
+    x=t,
+    y=X[:, 3],
+    name="x4 (damper velocity)",
+    line=dict(dash="dot")
+))
+
+# Noisy measurements
+fig.add_trace(go.Scatter(
+    x=t,
+    y=y1,
+    name="x1 noisy",
+    line=dict(dash="dash")
+))
+
+fig.add_trace(go.Scatter(
+    x=t,
+    y=y3,
+    name="x3 noisy",
+    line=dict(dash="dash")
+))
+
+# Wind
+fig.add_trace(go.Scatter(
+    x=t,
+    y=wind_vals,
+    name="Wind Force",
+    yaxis="y2",
+    line=dict(dash="longdash")
+))
+
+# Control
+fig.add_trace(go.Scatter(
+    x=t,
+    y=control_vals,
+    name="Control Force",
+    yaxis="y2"
+))
+
+fig.update_layout(
+
+    title="System Response under Synthetic Wind",
+
+    xaxis=dict(
+        title="Time (s)"
+    ),
+
+    yaxis=dict(
+        title="System States",
+        side="left"
+    ),
+
+    yaxis2=dict(
+        title="Wind / Control Force (N)",
+        overlaying="y",
+        side="right"
+    ),
+
+    hovermode="x unified"
+)
+
+fig.show(renderer="browser")
+
+# -------------------------
+# Save dataset
+# -------------------------
+df.to_csv("final_dataset.csv", index=False)
+
+print("Dataset saved successfully as final_dataset.csv.")
