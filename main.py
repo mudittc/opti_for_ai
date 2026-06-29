@@ -38,26 +38,27 @@ sigma_x3 = 0.01
 # -------------------------
 # Wind models
 # -------------------------
-# -------------------------
-# Wind models (Ornstein-Uhlenbeck Process)
-# -------------------------
-def generate_ou_wind(t, mean, theta, sigma, seed=None):
-    if seed is not None:
-        np.random.seed(seed)
-    w = np.zeros(len(t))
-    w[0] = mean
-    for i in range(1, len(t)):
-        dt = t[i] - t[i-1]
-        w[i] = w[i-1] + theta * (mean - w[i-1]) * dt + sigma * np.sqrt(dt) * np.random.normal()
-    return w
+def wind_model(t, mode):
+
+    if mode == "sin_300":
+        return 300 + 200*np.sin(0.4*t)
+
+    elif mode == "sin_500":
+        return 500 + 200*np.sin(0.4*t)
+
+    elif mode == "step_slow":
+        return 300 if int(t/5) % 2 == 0 else 600
+
+    elif mode == "step_fast":
+        return 200 if int(t/2) % 2 == 0 else 700
 
 # -------------------------
 # System dynamics
 # -------------------------
-def model(t, x, wind_interpolator):
+def model(t, x, wind_type):
 
     x1, x2, x3, x4 = x
-    w = wind_interpolator(t)
+    w = wind_model(t, wind_type)
 
     u = -K @ x
 
@@ -74,38 +75,20 @@ def model(t, x, wind_interpolator):
 t = np.linspace(0, 40, 800)   # 800 points (within your 500–1000 range)
 x0 = [0, 0, 0, 0]
 
-# Define randomized wind profiles using Ornstein-Uhlenbeck parameters
-wind_profiles = {
-    "light_wind":  {"mean": 300, "theta": 0.5, "sigma": 50,  "seed": 42},
-    "medium_wind": {"mean": 500, "theta": 0.5, "sigma": 100, "seed": 43},
-    "gusty_wind":  {"mean": 400, "theta": 0.1, "sigma": 250, "seed": 44},
-    "storm":       {"mean": 700, "theta": 0.8, "sigma": 400, "seed": 45}
-}
+wind_types = ["sin_300", "sin_500", "step_slow", "step_fast"]
 
 all_data = []
 
 # -------------------------
 # Run simulations
 # -------------------------
-for w_type, params in wind_profiles.items():
+for w_type in wind_types:
 
-    # Pre-generate randomized wind time-series
-    wind_vals = generate_ou_wind(
-        t, 
-        mean=params["mean"], 
-        theta=params["theta"], 
-        sigma=params["sigma"], 
-        seed=params["seed"]
-    )
-    
-    # Create continuous interpolator for the ODE solver
-    wind_interpolator = lambda ti: np.interp(ti, t, wind_vals)
-
-    # Solve dynamics
-    sol = solve_ivp(model, [0, 40], x0, t_eval=t, args=(wind_interpolator,))
+    sol = solve_ivp(model, [0, 40], x0, t_eval=t, args=(w_type,))
     X = sol.y.T   # (N, 4)
 
-    # Control input values
+    # Inputs
+    wind_vals = np.array([wind_model(ti, w_type) for ti in t])
     control_vals = np.array([-K @ X[i] for i in range(len(t))])
 
     # Noise (separate distributions)
