@@ -21,11 +21,11 @@ class GRUNet(nn.Module):
         super().__init__()
         self.gru = nn.GRU(
             input_size=4,
-            hidden_size=64,
-            num_layers=2,
+            hidden_size=16,
+            num_layers=1,
             batch_first=True
         )
-        self.fc = nn.Linear(64,3)
+        self.fc = nn.Linear(16,3)
 
     def forward(self,x):
         out,_ = self.gru(x)

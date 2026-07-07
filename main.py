@@ -144,16 +144,13 @@ def model(t, x, t_grid, wind_profile):
 # -------------------------
 # Simulation setup
 # -------------------------
-t = np.linspace(0, 40, 800)   # 800 points (within your 500–1000 range)
+t = np.linspace(0, 40, 1500)   # 800 points (within your 500–1000 range)
 x0 = [0, 0, 0, 0]
 
 # -------------------------
 # Generate fixed synthetic wind profile
 # -------------------------
-wind_vals = generate_wind(
-    t,
-    seed=42          # Change this if you ever want a different fixed wind
-)
+wind_vals = generate_wind(t, seed=None)
 
 # -------------------------
 # Solve system
